@@ -141,6 +141,14 @@ class Boat:
         return (2 * np.pi / (2 * np.pi - self.psi)) * r
     def o_unfold(self, o):
         return (1 - self.psi / (2 * np.pi)) * o
+
+    def make_unfolded_side_panel(self, rs, phis):
+        phi_ = self.o_unfold(phis)
+        rs_ = self.r_unfold(rs)
+        side_x = rs_ * np.cos(phi_)
+        side_y = rs_ * np.sin(phi_)
+        return side_x, side_y
+
     def mesh_faces(self, Nx, Ny):
         faces = []
         for i in range(Ny - 1):
@@ -222,7 +230,7 @@ class Boat:
         vertices = np.concatenate([np.stack([xr, y, z], axis=1), np.stack([xl, y, z], axis=1)])
         faces = self.mirror_line_mesh_faces(self.R)
         self.complete_top_cover_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        self.complete_top_cover_mesh.invert()
+        #self.complete_top_cover_mesh.invert()
     def top_covers_small(self):
         #Line3D
         if 1:
@@ -314,6 +322,8 @@ class Boat:
             self.front_panel_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
             self.front_panel_mesh.invert()
 
+
+
     def side_panels(self):
         h3, h20, hz = self.h3, self.h20, self.hz
         h2, h0 = self.h2, self.h0
@@ -343,19 +353,14 @@ class Boat:
             r_l = np.full((self.R,), self.r1)
             r_n = np.array([r_b, r_r, r_t, r_l])
             rs = np.concatenate(r_n)
-            def make_side(rs, phis):
-                phi_ = self.o_unfold(phis)
-                rs_ = self.r_unfold(rs)
-                side_x = rs_ * np.cos(phi_)
-                side_y = rs_ * np.sin(phi_)
-                return side_x, side_y
-            side_x, side_y = make_side(rs, phi)
+
+            side_x, side_y = self.make_unfolded_side_panel(rs, phi)
             self.unfolded_side_panel_pts = np.array([side_x, side_y]).T
 
             keys = ['top','base', 'back','front']
             pars = [(r_r, phi_r), (r_l, phi_l), (r_b, phi_b),(r_t, phi_t)]
             for i in range(len(keys)):
-                side_x, side_y = make_side(*pars[i])
+                side_x, side_y = self.make_unfolded_side_panel(*pars[i])
                 lenght = self.calculate_line_length(side_x, side_y)
                 if self.line_lengts[keys[i]].get('side panel', None) == None:self.line_lengts[keys[i]]['side panel'] = {'unfold':lenght}
                 else: self.line_lengts[keys[i]]['side panel']['unfold'] = lenght
@@ -391,13 +396,20 @@ class Boat:
             self.side_panel_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
 
     def small_inside_panels(self):
-        l3, l4, h2, h3, hz =  self.l3, self.l4, self.h2, self.h3, self.hz
-        x = [l4,l4,l3,l3,l4]
-        y = [h2, h3, h3, h2, h2]
-        z = [0, 0, hz, hz, 0]
-        self.small_inside_panels_pts = np.array([x,y,z]).T
-
-        #mesh
+        #Line3D
+        if 1:
+            l3, l4, h2, h3, hz =  self.l3, self.l4, self.h2, self.h3, self.hz
+            x = [l4,l4,l3,l3,l4]
+            y = [h2, h3, h3, h2, h2]
+            z = [0, 0, hz, hz, 0]
+            self.small_inside_panels_pts = np.array([x,y,z]).T
+        #Unfolded
+        if 1:
+            side = np.sqrt((l4-l3)*(l4-l3)+hz*hz)
+            x = [0,side,side,0,0]
+            y = [0,0,h3-h2, h3-h2,0]
+            self.small_inside_panels_unfolded_pts = np.array([x,y]).T
+        #Mesh
         if 1:
             vertices = self.small_inside_panels_pts
             faces = np.array([[0,1,2],[2,3,0]])
@@ -460,7 +472,7 @@ class Boat:
         ax.grid(True)
         ax.legend()
 
-        self.generate_all_geometry()
+        #self.generate_all_geometry()
 
         L = 2.2
         y_offset = 0.3
@@ -509,27 +521,33 @@ class Boat:
         ax.text(self.l0 + 0.02, (self.h0 + self.h2) / 2, 0, f"hx = {self.hx}", color='blue')
 
     def PlotParts(self):
-        self.generate_all_geometry()
+        #self.generate_all_geometry()
 
         fig, ax = plt.subplots(1,1)
 
-        ax.plot(self.base_panel_pts[:, 0], self.base_panel_pts[:, 1])
+        x,y = self.base_panel_pts[:, 0], self.base_panel_pts[:, 1]
+        ax.plot(x,y)
         x, y = self.unfolded_side_panel_pts[:, 0], self.unfolded_side_panel_pts[:, 1]
-        x0s = x[np.abs(y)<1e-5]
-        x01 = min(x0s)
+
+        x01, _ = self.make_unfolded_side_panel(self.r1, 0)
+        x02, _ = self.make_unfolded_side_panel(self.r2, 0)
+        side_panel_width = x02 - x01
+
         x0 = self.l1-x01
         x += x0
-        plt.plot(x, y)
-        plt.plot(-x, y)
+        ax.plot(x, y)
+        ax.plot(-x, y)
+
 
         x,y = self.unfolded_back_panel_pts[:, 0], self.unfolded_back_panel_pts[:, 1]
-        y -= (self.hz-self.h2)
+        y += np.min(self.unfolded_side_panel_pts[:,1])-self.hz
         ax.plot(x,y)
-        ax.plot(self.unfolded_front_panel_pts[:, 0], self.unfolded_front_panel_pts[:, 1])
+        x,y = self.unfolded_front_panel_pts[:, 0], self.unfolded_front_panel_pts[:, 1]
+        ax.plot(x,y)
 
-        x02 = max(x0s)
-        x0 = self.l11 + (x02-x01)+self.l1
-        #x0 = 0
+
+        x0 = self.l11 + self.l1 + side_panel_width
+
         x,y = self.top_cover_large_pts[:,0],self.top_cover_large_pts[:,1]
         x += x0
         ax.plot(x,y)
@@ -539,6 +557,19 @@ class Boat:
         x -= 2*x0
         ax.plot(-x, y)
 
+
+        x,y = self.mid_panel_pts[:,0], self.mid_panel_pts[:,2]
+        x += x0
+        y += self.h3-self.hz
+        ax.plot(x,y)
+
+        x,y = self.small_inside_panels_unfolded_pts[:,0],self.small_inside_panels_unfolded_pts[:,1]
+        y0 = -max(y)+self.h3-self.hz
+        y += y0
+        x+=x0
+        ax.plot(x,y)
+        x-=2*x0
+        ax.plot(-x, y)
 
 
         ax.grid(True)
@@ -588,7 +619,7 @@ class Boat:
         scene.show()
 
     def PlotMeshes(self):
-        self.generate_all_geometry()
+        #self.generate_all_geometry()
         axis = trimesh.creation.axis(origin_size=0.02)
         scene = trimesh.Scene()
         scene.add_geometry(axis)
@@ -761,9 +792,6 @@ class Boat:
 
         F_low = net_force_z(z_low)
         F_high = net_force_z(z_high)
-        print('x')
-        print(z_low, z_high)
-        print(F_low, F_high)
         if F_low > 0 or F_high < 0:
             raise ValueError("Bad initial bracket: need F_low<0<F_high")
 
@@ -872,7 +900,7 @@ class Boat:
 
         Weights = np.sum(Force_vectors_, axis=0)
 
-        z = self.find_equilibrium_z_backup(mesh, Weights[2], z_low, z_high, tol=1e-5)
+        z = self.find_equilibrium_z(mesh, Weights[2], z_low, z_high, tol=1e-5)
 
         submerged_mesh = self.submerged_mesh_f(mesh, z)
         V = submerged_mesh.volume
@@ -1063,10 +1091,14 @@ class Boat:
         axes[1].contour(X, Y, Zy, levels=[0], colors='black', linewidths=1.5)
 
         plt.tight_layout()
-    def plot_stability_sim_visual_dash(self, volume_mesh_rot_cache, z_matrix, angles_x, angles_y):
+    def plot_stability_sim_visual_dash(self, volume_mesh_rot_cache, z_matrix, angles_deg_xy):
         app = dash.Dash(__name__)
+        angles_x, angles_y = angles_deg_xy
         angles_x = np.array(angles_x)
         angles_y = np.array(angles_y)
+
+        angle_x_marks = {i: f"{angles_x[i]:.1f}°" for i in range(len(angles_x))}
+        angle_y_marks = {i: f"{angles_y[i]:.1f}°" for i in range(len(angles_y))}
 
         fixed_camera = dict(
             eye=dict(x=1.25, y=1.25, z=1.25),
@@ -1128,20 +1160,24 @@ class Boat:
                 html.Label('θx (deg)'),
                 dcc.Slider(
                     id='slider-x',
-                    min=float(angles_x.min()),
-                    max=float(angles_x.max()),
-                    step=float(angles_x[1] - angles_x[0]) if len(angles_x) > 1 else 1.0,
-                    value=float(angles_x[0])
+                    min=0,
+                    max=len(angles_x),
+                    step=None,
+                    value=0,
+                    marks=angle_x_marks,
+                    included=False
                 )
             ], style={'width': '80%', 'padding': '20px'}),
             html.Div([
                 html.Label('θy (deg)'),
                 dcc.Slider(
                     id='slider-y',
-                    min=float(angles_y.min()),
-                    max=float(angles_y.max()),
-                    step=float(angles_y[1] - angles_y[0]) if len(angles_y) > 1 else 1.0,
-                    value=float(angles_y[0])
+                    min=0,
+                    max=len(angles_y) - 1,
+                    step=None,
+                    value=0,
+                    marks=angle_y_marks,
+                    included=False
                 )
             ], style={'width': '80%', 'padding': '20px'})
         ])
@@ -1151,11 +1187,13 @@ class Boat:
             Input('slider-x', 'value'),
             Input('slider-y', 'value')
         )
-        def update_figure(theta_x, theta_y):
+        def update_figure(ix, iy):
+            theta_x = angles_x[ix]
+            theta_y = angles_y[iy]
             return make_figure(theta_x, theta_y)
         server_thread = threading.Thread(target=lambda: app.run(debug=True, use_reloader=False),daemon=True)
         server_thread.start()
-    def stability_sim_and_plot(self, Force_application_point_, Force_vectors_, L=100, s=20):
+    def stability_sim_and_plot(self, Force_application_point_, Force_vectors_, L=100, s=20, filename='stability_sim.pkl', load=0):
         θx_stable, θy_stable = boat.FindEquilibrium(Force_application_point_, Force_vectors_)
 
         θx_range = np.arange(-L, L + s, s)
@@ -1166,7 +1204,7 @@ class Boat:
         if θy_stable not in θy_range:
             θy_range = np.round(np.sort(np.concatenate([θy_range, [θy_stable]])), boat.decimals)
         angles_deg_xy = (θx_range, θy_range)
-        if 1:
+        if not load:
             angles_deg_xy, torques_, water_height, water_level = self.StabilitySim(angles_deg_xy, Force_application_point_,Force_vectors_)
             volume_mesh_rot_cache = self.volume_mesh_rot_cache
             data_to_save = {
@@ -1176,10 +1214,10 @@ class Boat:
                 'water_level': water_level,
                 'volume_mesh_rot_cache': boat.volume_mesh_rot_cache,
             }
-            with open('stability_data.pkl', 'wb') as f:
+            with open(filename, 'wb') as f:
                 pkl.dump(data_to_save, f)
         else:
-            with open('stability_data.pkl', 'rb') as f:
+            with open(filename, 'rb') as f:
                 loaded_data = pkl.load(f)
 
             angles_deg_xy = loaded_data['angles_deg_xy']
@@ -1190,10 +1228,10 @@ class Boat:
 
             # plots
         if 1:
-            boat.plot_stability_sim_visual_plotly(volume_mesh_rot_cache=volume_mesh_rot_cache, z_matrix=water_height, angles_x=angles_deg_xy[0], angles_y=angles_deg_xy[1])
-            boat.stability_plots_torquexy(angles_deg_xy, torques_, θx_stable, θy_stable)
-            boat.stability_contour_plot(angles_deg_xy, torques_, θx_stable, θy_stable)
-            boat.stability_plot3D(angles_deg_xy, torques_, θx_stable, θy_stable)
+            boat.plot_stability_sim_visual_dash(volume_mesh_rot_cache=volume_mesh_rot_cache, z_matrix=water_height, angles_deg_xy=angles_deg_xy)
+            #boat.stability_plots_torquexy(angles_deg_xy, torques_, θx_stable, θy_stable)
+            #boat.stability_contour_plot(angles_deg_xy, torques_, θx_stable, θy_stable)
+            #boat.stability_plot3D(angles_deg_xy, torques_, θx_stable, θy_stable)
     def stability_sim_and_plot2D(self, Force_application_point_, Force_vectors_, L=100, s=20):
         θx_stable, θy_stable = boat.FindEquilibrium(Force_application_point_, Force_vectors_)
 
@@ -1234,7 +1272,9 @@ class Boat:
 
 
 if __name__ == '__main__':
-    if 0:
+
+    #generate boat data
+    if 1:
         boat = Boat(l0=0.6/2, l1=1.15/2, l2=0.9/2, hx=2.5, hz=0.4, o_deg=45, R=20)
         boat.generate_all_geometry()
         boat.BoatProperties()
@@ -1247,10 +1287,16 @@ if __name__ == '__main__':
         for key in boat.line_lengts:
             print(key)
             print(boat.line_lengts[key])
+
+    #plot Parts
+    if 0:
+        boat.PlotParts()
+        plt.show()
     #plot 3DExplain
-    if 1:
+    if 0:
         boat.Plot3DExplain()
         plt.show()
+
 
 
 
@@ -1297,11 +1343,10 @@ if __name__ == '__main__':
         Force_application_point_ = np.array([boat.CG, passager_loc,mast_loc,daggerboard_loc,rudder_loc, weight_loc])
         Force_vectors_ = np.array([boat_force, passager_force,mast_force,daggerboard_force,rudder_force, weight_force])
         boat.stability_sim_and_plot2D(Force_application_point_, Force_vectors_, L=90, s=5)
+        boat.stability_sim_and_plot(Force_application_point_, Force_vectors_, 80, 5, 'stability_sim_loaded.pkl',load=1)
 
     plt.show()
-
-
-
+    x=input()
 
     #stability sim and plot code
     if 0:
