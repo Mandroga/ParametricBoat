@@ -516,6 +516,14 @@ class Boat:
                 ax.scatter(*pt, color='red')
                 ax.text(*pt, name, fontsize=9)
 
+        offset = 0.02
+        points_list = [[(-self.l11,0, self.hz),(self.l11,0, self.hz)]]
+        for p1,p2 in points_list:
+            ax.plot([p1[0],p2[0]],[p1[1],p2[1]], [p1[2],p2[2]], 'b--')
+            if p1[0] == p2[0]:
+                ax.text(p1[0]+offset, (p1[1]+p2[1])/2, 0, f"L = {np.round(np.abs(p1[1]-p2[1]),2)}", color='blue')
+            else:
+                ax.text(p1[1] + offset, (p1[0] + p2[0]) / 2, 0, f"L = {np.round(np.abs(p1[0] - p2[0]),2)}", color='blue')
 
         ax.plot([self.l0, self.l0], [self.h2, self.h0], [0, 0], 'b--')
         ax.text(self.l0 + 0.02, (self.h0 + self.h2) / 2, 0, f"hx = {self.hx}", color='blue')
@@ -665,6 +673,9 @@ class Boat:
             I += cross * (y[i] ** 2 + y[i] * y[j] + y[j] ** 2)
         return abs(I) / 12
 
+    def __str__(self):
+        str = f'Boat properties:\nWeight: {self.boat_weight}\nBuoy Impulsion Kg: {self.buoy_volume*self.water_density}\nCabin Weight: {self.cabin_volume*self.water_density}\nCabin width top: {self.cabin_width_top}\nCabin width bottom: {self.cabin_width_bottom}\nLenght bottom: {self.lenght_bottom}\nLenght top: {self.lenght_top}\nBeam: {self.beam}\nBottom width: {self.l1*2}\n2*l22: {self.l22 * 2}'
+        return str
     def BoatProperties(self):
         self.wood_density = 500
         self.water_density = 1000
@@ -676,9 +687,13 @@ class Boat:
 
         self.CG = self.boat_mesh.centroid
 
-        self.lenght_overall= self.hx
+        self.lenght_bottom = self.hx
+        self.lenght_top = self.h20 - self.h2
         self.beam = self.l11 * 2
-
+        self.buoy_volume = self.boat_mesh.volume
+        self.cabin_volume = 0.5*(self.l4+self.l3)*self.hz*(self.h3-self.h2)
+        self.cabin_width_bottom = self.l4*2
+        self.cabin_width_top = self.l3*2
         # LPP ?
         #Draft ? falta o patilhao.. min and max,
         # distancia vertical entre linha de agua e ponto mais baixo do casco
@@ -686,7 +701,7 @@ class Boat:
         if 1:
             Force_application_point_ = np.array([self.CG])
             Force_vectors_ = np.array([np.array([0, 0, -self.boat_weight * self.g])])
-            self.DynamicBoatProperties(Force_application_point_, Force_vectors_)
+#            self.DynamicBoatProperties(Force_application_point_, Force_vectors_)
     def DynamicBoatProperties(self, Force_application_point_, Force_vectors_):
         θx_opt, θy_opt = self.FindEquilibrium(Force_application_point_, Force_vectors_)
         Force_application_point, Force_vectors, Torque, z_waterline = self.TorqueF((θx_opt, θy_opt), Force_application_point_, Force_vectors_)
@@ -724,10 +739,8 @@ class Boat:
         displacement = self.boat_weight  # missing max!
 
     def rot_translate(self, angle_x_deg, angle_y_deg, center_rot=np.array([0,0,0])):
-        angle_x_deg = np.round(angle_x_deg, self.decimals)
-        angle_y_deg = np.round(angle_y_deg, self.decimals)
-        angle_y = np.round(np.deg2rad(angle_y_deg), self.decimals)
-        angle_x = np.round(np.deg2rad(angle_x_deg), self.decimals)
+        angle_y = np.deg2rad(angle_y_deg)
+        angle_x = np.deg2rad(angle_x_deg)
         yaw_axis = [0, 1, 0]  # Yaw around Y-axis
         pitch_axis = [1, 0, 0]  # Pitch around X-axis
 
@@ -866,19 +879,23 @@ class Boat:
         # Return in 3D with z restored
         return np.array([centroid_2D[0], centroid_2D[1], z])
     def StabilitySim(self, angles_deg_xy:tuple, Force_application_point_, Force_vectors_):
-        self.mesh_rot_cache_f(*angles_deg_xy)
-        volume_mesh_rot_cache = self.volume_mesh_rot_cache
         torques = np.zeros((len(angles_deg_xy[0]),len(angles_deg_xy[1]),3))
         water_level = np.zeros((len(angles_deg_xy[0]),len(angles_deg_xy[1]),1))
         water_height = np.zeros((len(angles_deg_xy[0]), len(angles_deg_xy[1]), 1))
-
+        CGs = np.zeros((len(angles_deg_xy[0]),len(angles_deg_xy[1]),3))
+        Bs = np.zeros((len(angles_deg_xy[0]),len(angles_deg_xy[1]),3))
         for i, angle_deg_x in enumerate(tqdm(angles_deg_xy[0], 'Stability sim')):
             for j, angle_deg_y in enumerate(angles_deg_xy[1]):
-                ang_deg_xy = tuple(np.round([angle_deg_x, angle_deg_y],self.decimals))
-                mesh, top_mesh = volume_mesh_rot_cache[ang_deg_xy]
+                ang_deg_xy = tuple([angle_deg_x, angle_deg_y])
+                #mesh, top_mesh = volume_mesh_rot_cache[ang_deg_xy]
+                mesh, top_mesh = self.mesh_rot_f(angle_deg_x, angle_deg_y)
                 Force_application_point, Force_vectors, Torque, z = self.TorqueF(ang_deg_xy, Force_application_point_, Force_vectors_)
+                CG = sum([Force_application_point[i]*Force_vectors[i][2] for i in range(len(Force_application_point)-1)])/sum([Force_vectors[i][2] for i in range(len(Force_vectors)-1)])
+                B = Force_application_point[-1]
                 torques[i,j] = Torque
                 water_height[i,j] = z
+                CGs[i,j] = CG
+                Bs[i,j] = B
                 top_z_min = top_mesh.bounds[0, 2]
                 if z > top_z_min:
                     water_level[i,j] = 1
@@ -886,13 +903,20 @@ class Boat:
                 #print(f'θ: {ang_deg_xy}, CG: {np.round(Force_application_point[0],3)}, B: {np.round(Force_application_point[-1],3)}, T: {np.round(Torque,3)}')
         #print(torques.shape, water_level.shape)
 
-        return angles_deg_xy, torques, water_height, water_level
+        return angles_deg_xy, torques, water_height, water_level, CGs, Bs
 
+    def mesh_rot_f(self, angle_x, angle_y):
+        mesh = self.volume_boat_mesh.copy()
+        top_mesh = self.top_hole_mesh.copy()
+        final_transform = self.rot_translate(angle_x, angle_y)
+        mesh.apply_transform(final_transform)
+        top_mesh.apply_transform(final_transform)
+        self.volume_mesh_rot_cache[(angle_x, angle_y)] = (mesh, top_mesh)
+        return mesh, top_mesh
     def TorqueF(self, angle_deg_xy, Force_application_point_, Force_vectors_):
-        Force_application_point = np.concatenate(
-            [Force_application_point_, np.ones((Force_application_point_.shape[0], 1))], axis=1)
+        Force_application_point = np.concatenate([Force_application_point_, np.ones((Force_application_point_.shape[0], 1))], axis=1)
 
-        mesh, top_mesh = self.volume_mesh_rot_cache[angle_deg_xy]
+        mesh, top_mesh = self.mesh_rot_f(*angle_deg_xy)
         R = self.rot_translate(*angle_deg_xy)
         Force_application_point = (R @ Force_application_point.T).T
         z_low = mesh.vertices[:, 2].min()
@@ -911,67 +935,23 @@ class Boat:
         Force_vectors = np.concatenate([Force_vectors_, Impulsion])
         Torque = np.sum(np.cross(Force_application_point, Force_vectors), axis=0)
         return Force_application_point, Force_vectors, Torque, z
-    def FindEquilibrium_backup(self, Force_application_point_, Force_vectors_):
-        def bisection_root(f, a, b, tol=1e-6, max_iter=100):
-            fa = f(a)
-            fb = f(b)
-            if fa * fb > 0:
-                raise ValueError("Function does not have opposite signs at the interval endpoints")
 
-            for _ in range(max_iter):
-                c = (a + b) / 2
-                fc = f(c)
-                if abs(fc) < tol or (b - a) / 2 < tol:
-                    return c
-                if fa * fc < 0:
-                    b = c
-                    fb = fc
-                else:
-                    a = c
-                    fa = fc
-            return (a + b) / 2
-        def objx(θx):
-            θx = np.round(θx, self.decimals)
-            self.mesh_rot_cache_f([θx],[0])
-            _, _, Torque, _ = self.TorqueF((θx,0), Force_application_point_, Force_vectors_)
-            return Torque[0]
-        def objy(θy):
-            θy = np.round(θy, self.decimals)
-            self.mesh_rot_cache_f([0],[θy])
-            _, _, Torque, _ = self.TorqueF((0,θy), Force_application_point_, Force_vectors_)
-            print(θy, Torque[1])
-            return Torque[1]
-
-        θx_opt = bisection_root(objx, -45, 45)
-        θy_opt = bisection_root(objy, -45, 45)
-        θx_opt, θy_opt = np.round([θx_opt,θy_opt], self.decimals)
-        self.mesh_rot_cache_f([θx_opt], [θy_opt])
-        _, _ , T, z = self.TorqueF((θx_opt, θy_opt), Force_application_point_, Force_vectors_)
-        print(f"Optimal angles: θx, θy = {θx_opt}, {θy_opt}, T = {T}, z = {z}")
-        return θx_opt, θy_opt
     def FindEquilibrium(self,Force_application_point_, Force_vectors_):
         def residual(angles):
             θx, θy = angles
-            # optionally round if you really need to
-            θx = np.round(θx, self.decimals)
-            θy = np.round(θy, self.decimals)
 
-            # update your mesh caches
-            self.mesh_rot_cache_f([θx], [θy])
-
-            # compute torques
+            #print('angles', θx, θy)
             _, _, Torque, _ = self.TorqueF((θx, θy), Force_application_point_, Force_vectors_)
+            #print('T', Torque[:2])
             # Torque is an array [Tx, Ty, …]; return the first two
             return Torque[:2]
-        x0 = np.array([0.0, 0.0])
+        x0 = np.array([0.0, 0])
         sol = root(residual, x0, tol=1e-6)
 
         if not sol.success:
             raise RuntimeError(f"Root‐finding failed: {sol.message}")
 
-        θx_opt, θy_opt = np.round(sol.x, self.decimals)
-
-        self.mesh_rot_cache_f([θx_opt], [θy_opt])
+        θx_opt, θy_opt = sol.x
         _, _, T, z = self.TorqueF((θx_opt, θy_opt), Force_application_point_, Force_vectors_)
 
         print(f"Optimal angles: θx, θy = {θx_opt}, {θy_opt}, T = {T}, z = {z}")
@@ -1091,7 +1071,8 @@ class Boat:
         axes[1].contour(X, Y, Zy, levels=[0], colors='black', linewidths=1.5)
 
         plt.tight_layout()
-    def plot_stability_sim_visual_dash(self, volume_mesh_rot_cache, z_matrix, angles_deg_xy):
+
+    def plot_stability_sim_visual_dash(self, volume_mesh_rot_cache, z_matrix, angles_deg_xy, CGs, Bs):
         app = dash.Dash(__name__)
         angles_x, angles_y = angles_deg_xy
         angles_x = np.array(angles_x)
@@ -1136,7 +1117,21 @@ class Boat:
             zz = np.full_like(xx, h)
             plane = go.Surface(x=xx, y=yy, z=zz, opacity=0.3, showscale=False)
 
-            fig = go.Figure(data=[mesh, plane])
+            scatter_cgs = go.Scatter3d(
+                x=[CGs[ix,iy, 0]], y=[CGs[ix,iy,1]], z=[CGs[ix,iy, 2]],
+                mode='markers',
+                marker=dict(size=5, color='red', symbol='circle'),
+                name='CGs'
+            )
+
+            scatter_bs = go.Scatter3d(
+                x=[Bs[ix,iy, 0]], y=[Bs[ix,iy, 1]], z=[Bs[ix,iy, 2]],
+                mode='markers',
+                marker=dict(size=5, color='blue', symbol='square'),
+                name='Bs'
+            )
+
+            fig = go.Figure(data=[mesh, plane, scatter_cgs, scatter_bs])
             fig.update_layout(
                 scene=dict(
                     xaxis=dict(range=[-boat.h20, boat.h20], autorange=False),
@@ -1191,21 +1186,25 @@ class Boat:
             theta_x = angles_x[ix]
             theta_y = angles_y[iy]
             return make_figure(theta_x, theta_y)
-        server_thread = threading.Thread(target=lambda: app.run(debug=True, use_reloader=False),daemon=True)
-        server_thread.start()
-    def stability_sim_and_plot(self, Force_application_point_, Force_vectors_, L=100, s=20, filename='stability_sim.pkl', load=0):
-        θx_stable, θy_stable = boat.FindEquilibrium(Force_application_point_, Force_vectors_)
 
+        server_thread = threading.Thread(target=lambda: app.run(debug=True, use_reloader=False), daemon=True)
+        server_thread.start()
+
+    def stability_sim_and_plot(self, Force_application_point_, Force_vectors_, L=100, s=20,filepath='stability_sim.pkl', load=0):
+        try:
+            θx_stable, θy_stable = boat.FindEquilibrium(Force_application_point_, Force_vectors_)
+        except Exception as e:
+            print(e)
+            θx_stable, θy_stable = 0,0
         θx_range = np.arange(-L, L + s, s)
         if θx_stable not in θx_range:
             θx_range = np.round(np.sort(np.concatenate([θx_range, [θx_stable]])), boat.decimals)
-
         θy_range = np.arange(-L, L + s, s)
         if θy_stable not in θy_range:
             θy_range = np.round(np.sort(np.concatenate([θy_range, [θy_stable]])), boat.decimals)
         angles_deg_xy = (θx_range, θy_range)
         if not load:
-            angles_deg_xy, torques_, water_height, water_level = self.StabilitySim(angles_deg_xy, Force_application_point_,Force_vectors_)
+            angles_deg_xy, torques_, water_height, water_level, CGs, Bs = self.StabilitySim(angles_deg_xy,Force_application_point_,Force_vectors_)
             volume_mesh_rot_cache = self.volume_mesh_rot_cache
             data_to_save = {
                 'angles_deg_xy': angles_deg_xy,
@@ -1213,11 +1212,13 @@ class Boat:
                 'water_height': water_height,
                 'water_level': water_level,
                 'volume_mesh_rot_cache': boat.volume_mesh_rot_cache,
+                'CGs':CGs,
+                'Bs':Bs
             }
-            with open(filename, 'wb') as f:
+            with open(filepath, 'wb') as f:
                 pkl.dump(data_to_save, f)
         else:
-            with open(filename, 'rb') as f:
+            with open(filepath, 'rb') as f:
                 loaded_data = pkl.load(f)
 
             angles_deg_xy = loaded_data['angles_deg_xy']
@@ -1225,80 +1226,104 @@ class Boat:
             water_height = loaded_data['water_height']
             water_level = loaded_data['water_level']
             volume_mesh_rot_cache = loaded_data['volume_mesh_rot_cache']
+            CGs = loaded_data['CGs']
+            Bs = loaded_data['Bs']
 
             # plots
         if 1:
-            boat.plot_stability_sim_visual_dash(volume_mesh_rot_cache=volume_mesh_rot_cache, z_matrix=water_height, angles_deg_xy=angles_deg_xy)
-            #boat.stability_plots_torquexy(angles_deg_xy, torques_, θx_stable, θy_stable)
-            #boat.stability_contour_plot(angles_deg_xy, torques_, θx_stable, θy_stable)
-            #boat.stability_plot3D(angles_deg_xy, torques_, θx_stable, θy_stable)
-    def stability_sim_and_plot2D(self, Force_application_point_, Force_vectors_, L=100, s=20):
-        θx_stable, θy_stable = boat.FindEquilibrium(Force_application_point_, Force_vectors_)
-
-        θx_range = np.arange(-L, L + s, s)
-        if θx_stable not in θx_range:
-            θx_range = np.round(np.sort(np.concatenate([θx_range, [θx_stable]])), boat.decimals)
-
-        θy_range = np.arange(-L, L + s, s)
-        if θy_stable not in θy_range:
-            θy_range = np.round(np.sort(np.concatenate([θy_range, [θy_stable]])), boat.decimals)
-        angles_deg_x = (θx_range,[θy_stable])
-        angles_deg_y = ([θx_stable], θy_range)
-        if 1:
-            angles_deg_x, torquesx_, water_height, water_levelx_ = self.StabilitySim(angles_deg_x, Force_application_point_, Force_vectors_)
-
-            angles_deg_y, torquesy_, water_height, water_levely_ = self.StabilitySim(angles_deg_y,Force_application_point_,Force_vectors_)
-            angles_deg_x = np.array(angles_deg_x[0])
-            angles_deg_y = np.array(angles_deg_y[1])
-
-            θx_i = np.where(angles_deg_x == θx_stable)[0][0]
-            θy_i = np.where(angles_deg_y == θy_stable)[0][0]
-
-            water_levelx_ = water_levelx_[:,0].flatten()
-            water_levelx = np.concatenate([[0],np.diff(np.sign(water_levelx_))]).astype(bool)
-            water_levely_ = water_levely_[0, :].flatten()
-            water_levely = np.concatenate([[0],np.diff(np.sign(water_levely_))]).astype(bool)
-
-            torquesx = torquesx_[:, 0, 0].copy()
-            torquesx[:θx_i] *= -1
-
-            torquesy = torquesy_[0, :, 1].copy()
-            torquesy[:θy_i] *= -1
-            fig, ax = plt.subplots(1,2)
+            boat.plot_stability_sim_visual_dash(volume_mesh_rot_cache=volume_mesh_rot_cache, z_matrix=water_height,
+                                                angles_deg_xy=angles_deg_xy, CGs=CGs, Bs=Bs)
+            # boat.stability_plots_torquexy(angles_deg_xy, torques_, θx_stable, θy_stable)
+            # boat.stability_contour_plot(angles_deg_xy, torques_, θx_stable, θy_stable)
+            # boat.stability_plot3D(angles_deg_xy, torques_, θx_stable, θy_stable)
+    def stability_sim_and_plot2D(self, Force_application_point_, Force_vectors_, L=100, s=20,filepath='stability_sim2D.pkl', load=0):
+        if load and os.path.exists(filepath):
+            with open(filepath, 'rb') as f:
+                d = pickle.load(f)
+                angles_deg_x = d['angles_x']
+                angles_deg_y = d['angles_y']
+                water_levelx = d['water_x']
+                water_levely = d['water_y']
+                torquesx = d['torquesx']
+                torquesy = d['torquesy']
+            fig, ax = plt.subplots(1, 2)
             self.stability_plot(angles_deg_x, torquesx, 'Pitch', ax[0])
             ax[0].scatter(angles_deg_x[water_levelx], torquesx[water_levelx], label='Flood threshold')
             self.stability_plot(angles_deg_y, torquesy, 'Roll', ax[1])
             ax[1].scatter(angles_deg_y[water_levely], torquesy[water_levely], label='Flood threshold')
-
+            
+        else:
+            try:
+                θx_stable, θy_stable = boat.FindEquilibrium(Force_application_point_, Force_vectors_)
+            except Exception as e:
+                print(e)
+                θx_stable, θy_stable = 0, 0
+            θx_range = np.arange(-L, L + s, s)
+            if θx_stable not in θx_range:
+                θx_range = np.round(np.sort(np.concatenate([θx_range, [θx_stable]])), boat.decimals)
+    
+            θy_range = np.arange(-L, L + s, s)
+            if θy_stable not in θy_range:
+                θy_range = np.round(np.sort(np.concatenate([θy_range, [θy_stable]])), boat.decimals)
+            angles_deg_x = (θx_range,[θy_stable])
+            angles_deg_y = ([θx_stable], θy_range)
+            if 1:
+                angles_deg_x, torquesx_, water_height, water_levelx_, _, _ = self.StabilitySim(angles_deg_x, Force_application_point_, Force_vectors_)
+    
+                angles_deg_y, torquesy_, water_height, water_levely_, _, _ = self.StabilitySim(angles_deg_y,Force_application_point_,Force_vectors_)
+                angles_deg_x = np.array(angles_deg_x[0])
+                angles_deg_y = np.array(angles_deg_y[1])
+    
+                tol = 1e-6
+                θx_i = np.where(np.abs(angles_deg_x-θx_stable)<tol)[0][0]
+                θy_i = np.where(np.abs(angles_deg_y-θy_stable)<tol)[0][0]
+    
+                water_levelx_ = water_levelx_[:,0].flatten()
+                water_levelx = np.concatenate([[0],np.diff(np.sign(water_levelx_))]).astype(bool)
+                water_levely_ = water_levely_[0, :].flatten()
+                water_levely = np.concatenate([[0],np.diff(np.sign(water_levely_))]).astype(bool)
+    
+                torquesx = torquesx_[:, 0, 0].copy()
+                torquesx[:θx_i] *= -1
+    
+                torquesy = torquesy_[0, :, 1].copy()
+                torquesy[:θy_i] *= -1
+                fig, ax = plt.subplots(1,2)
+                self.stability_plot(angles_deg_x, torquesx, 'Pitch', ax[0])
+                ax[0].scatter(angles_deg_x[water_levelx], torquesx[water_levelx], label='Flood threshold')
+                self.stability_plot(angles_deg_y, torquesy, 'Roll', ax[1])
+                ax[1].scatter(angles_deg_y[water_levely], torquesy[water_levely], label='Flood threshold')
+                with open(filepath, 'wb') as f:
+                    d = {'angles_x':angles_deg_x, 'angles_y':angles_deg_y, 'water_x':water_levelx,'water_y':water_levely,'torquesx':torquesx,'torquesy':torquesy}
+                    pickle.dump(d,f)
 
 if __name__ == '__main__':
 
     #generate boat data
-    if 1:
-        boat = Boat(l0=0.6/2, l1=1.15/2, l2=0.9/2, hx=2.5, hz=0.4, o_deg=45, R=20)
+    if 0:
+        boat = Boat(l0=0.4/2, l1=1/2, l2=0.8/2, hx=2, hz=0.4, o_deg=30, R=20)
         boat.generate_all_geometry()
         boat.BoatProperties()
         with open('boat_instance.pkl','wb') as f: pickle.dump(boat, f)
     else:
         with open('boat_instance.pkl', 'rb') as f: boat = pickle.load(f)
 
+    print(boat)
+
     #boat line lenghts
     if 0:
         for key in boat.line_lengts:
             print(key)
             print(boat.line_lengts[key])
-
+    #plot 3DExplain
+    if 0:
+       # boat.Plot3D()
+        boat.Plot3DExplain()
+        plt.show()
     #plot Parts
     if 0:
         boat.PlotParts()
         plt.show()
-    #plot 3DExplain
-    if 0:
-        boat.Plot3DExplain()
-        plt.show()
-
-
-
 
     #lightweight
     l3, l4, h3, h2, hz, h20, g = boat.l3, boat.l4, boat.h3, boat.h2, boat.hz, boat.h20,boat.g
@@ -1309,7 +1334,7 @@ if __name__ == '__main__':
         boat.stability_sim_and_plot2D(Force_application_point_, Force_vectors_, L=180, s=5)
 
     #1 passager
-    passager_x = 0.4
+    passager_x = 0.2
     passager_y = (h2+h3)/2
     passager_z = 0.5
     passager_loc = np.array([passager_x,passager_y, passager_z])
@@ -1342,59 +1367,8 @@ if __name__ == '__main__':
     if 1:
         Force_application_point_ = np.array([boat.CG, passager_loc,mast_loc,daggerboard_loc,rudder_loc, weight_loc])
         Force_vectors_ = np.array([boat_force, passager_force,mast_force,daggerboard_force,rudder_force, weight_force])
-        boat.stability_sim_and_plot2D(Force_application_point_, Force_vectors_, L=90, s=5)
-        boat.stability_sim_and_plot(Force_application_point_, Force_vectors_, 80, 5, 'stability_sim_loaded.pkl',load=1)
+        boat.stability_sim_and_plot2D(Force_application_point_, Force_vectors_, L=90, s=1, filepath='stability_sim2D.pkl',load=1)
+        boat.stability_sim_and_plot(Force_application_point_, Force_vectors_, 10, 1, filepath='stability_sim.pkl',load=0)
 
     plt.show()
     x=input()
-
-    #stability sim and plot code
-    if 0:
-        #sim pars
-        if 1:
-            Force_application_point_ = np.array([boat.CG])
-            Force_vectors_ = np.array([np.array([0, 0, -boat.boat_weight * boat.g])])
-            θx_stable, θy_stable = boat.FindEquilibrium(Force_application_point_, Force_vectors_)
-            θx_stable, θy_stable = -1.12138808, 0.0
-
-            s = 5
-            L = 100
-            θx_range = np.arange(-L,L+s,s)
-            if θx_stable not in θx_range:
-                θx_range = np.round(np.sort(np.concatenate([θx_range,[θx_stable]])), boat.decimals)
-
-            θy_range= np.arange(-L, L+s, s)
-            if θy_stable not in θy_range:
-                θy_range = np.round(np.sort(np.concatenate([θy_range, [θy_stable]])), boat.decimals)
-            angles_deg_xy = (θx_range, θy_range)
-
-        #run sim else load
-        if 1:
-            angles_deg_xy, torques_, water_height, water_level = boat.StabilitySim(angles_deg_xy, Force_application_point_, Force_vectors_)
-            volume_mesh_rot_cache = boat.volume_mesh_rot_cache
-            data_to_save = {
-                'angles_deg_xy': angles_deg_xy,
-                'torques': torques_,
-                'water_height': water_height,
-                'water_level': water_level,
-                'volume_mesh_rot_cache': boat.volume_mesh_rot_cache,
-            }
-            with open('stability_data.pkl', 'wb') as f:
-                pkl.dump(data_to_save, f)
-        else:
-            with open('stability_data.pkl', 'rb') as f:
-                loaded_data = pkl.load(f)
-
-            angles_deg_xy = loaded_data['angles_deg_xy']
-            torques_ = loaded_data['torques']
-            water_height = loaded_data['water_height']
-            water_level = loaded_data['water_level']
-            volume_mesh_rot_cache = loaded_data['volume_mesh_rot_cache']
-
-        #plots
-        if 1:
-            boat.plot_stability_sim_visual_plotly(volume_mesh_rot_cache=volume_mesh_rot_cache, z_matrix=water_height,angles_x=angles_deg_xy[0], angles_y=angles_deg_xy[1])
-            boat.stability_plots_torquexy(angles_deg_xy, torques_, θx_stable, θy_stable)
-            boat.stability_contour_plot(angles_deg_xy, torques_, θx_stable, θy_stable)
-            boat.stability_plot3D(angles_deg_xy, torques_, θx_stable, θy_stable)
-            plt.show()
